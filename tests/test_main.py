@@ -2,7 +2,13 @@ import hashlib
 import hmac
 import unittest
 
-from app.main import Settings, build_notification, build_telegram_payload, verify_signature
+from app.main import (
+    NotificationPublisher,
+    Settings,
+    build_notification,
+    build_telegram_payload,
+    verify_signature,
+)
 
 
 class SignatureTests(unittest.TestCase):
@@ -97,7 +103,77 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(notification.subject, "main")
         self.assertIn("1234567 — First change", notification.content)
         self.assertIn("abcdef1 — Second change", notification.content)
+        self.assertNotIn("HUSSEIN", notification.content)
         self.assertEqual(notification.button_text, "عرض التغييرات في GitHub")
+        self.assertEqual(notification.group_key, "ihhaiq/GitSpy")
+        self.assertEqual(notification.event_kind, "push")
+
+    def test_merged_pull_request_notification(self) -> None:
+        payload = {
+            "action": "closed",
+            "repository": {
+                "full_name": "ihhaiq/GitSpy",
+                "html_url": "https://github.com/ihhaiq/GitSpy",
+                "owner": {"login": "ihhaiq"},
+            },
+            "sender": {"login": "ihhaiq"},
+            "pull_request": {
+                "merged": True,
+                "merge_commit_sha": "1234567890abcdef",
+                "title": "إضافة ميزة جديدة",
+                "html_url": "https://github.com/ihhaiq/GitSpy/pull/8",
+                "merged_by": {"login": "ihhaiq"},
+                "head": {"ref": "feature/new"},
+                "base": {"ref": "main"},
+            },
+        }
+        notification = build_notification("pull_request", payload, "ihhaiq")
+        self.assertIsNotNone(notification)
+        assert notification is not None
+        self.assertEqual(notification.title, "Merge جديد")
+        self.assertEqual(notification.subject, "feature/new → main")
+        self.assertEqual(notification.content, "• 1234567 — إضافة ميزة جديدة")
+        self.assertEqual(notification.event_id, "1234567890abcdef")
+        self.assertEqual(notification.event_kind, "merge")
+
+    def test_nearby_updates_edit_the_same_message(self) -> None:
+        sent: list[object] = []
+        edited: list[tuple[object, int]] = []
+        settings = Settings("token", "-1001", "secret", "ihhaiq", None, 8080)
+
+        def sender(_settings: Settings, notification: object) -> int:
+            sent.append(notification)
+            return 77
+
+        def editor(_settings: Settings, notification: object, message_id: int) -> None:
+            edited.append((notification, message_id))
+
+        publisher = NotificationPublisher(settings, sender=sender, editor=editor)
+        base_payload = {
+            "ref": "refs/heads/main",
+            "deleted": False,
+            "repository": {"full_name": "ihhaiq/GitSpy", "owner": {"login": "ihhaiq"}},
+            "sender": {"login": "ihhaiq"},
+        }
+        first = build_notification(
+            "push",
+            {**base_payload, "after": "aaa1111", "commits": [{"id": "aaa1111", "message": "First"}]},
+            "ihhaiq",
+        )
+        second = build_notification(
+            "push",
+            {**base_payload, "after": "bbb2222", "commits": [{"id": "bbb2222", "message": "Second"}]},
+            "ihhaiq",
+        )
+        assert first is not None and second is not None
+
+        publisher.publish(first)
+        publisher.publish(second)
+
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(len(edited), 1)
+        self.assertEqual(edited[0][1], 77)
+        self.assertEqual(edited[0][0].content, "• bbb2222 — Second")
 
 
 if __name__ == "__main__":

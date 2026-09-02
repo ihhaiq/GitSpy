@@ -7,7 +7,7 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,7 +30,10 @@ SUPPORTED_EVENTS = {
     "discussion_comment",
     "commit_comment",
     "push",
+    "pull_request",
 }
+
+PUSH_EDIT_WINDOW_SECONDS = 90
 
 
 @dataclass(frozen=True)
@@ -78,6 +81,17 @@ class Notification:
     content: str
     url: str
     button_text: str
+    group_key: str | None = None
+    event_id: str | None = None
+    event_kind: str = "comment"
+
+
+@dataclass
+class PublishedNotification:
+    message_id: int
+    event_id: str | None
+    event_kind: str
+    updated_at: float
 
 
 class DeliveryCache:
@@ -134,7 +148,10 @@ def _shorten(text: str, limit: int = MAX_COMMENT_CHARS) -> str:
 def build_notification(event: str, payload: Mapping[str, Any], expected_owner: str) -> Notification | None:
     if event not in SUPPORTED_EVENTS:
         return None
-    if event != "push" and payload.get("action") != "created":
+    if event == "pull_request":
+        if payload.get("action") != "closed" or not _nested(payload, "pull_request", "merged", default=False):
+            return None
+    elif event != "push" and payload.get("action") != "created":
         return None
 
     owner = str(_nested(payload, "repository", "owner", "login"))
@@ -160,15 +177,13 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
                     continue
                 commit_id = str(commit.get("id") or "")[:7] or "???????"
                 message = _shorten(str(commit.get("message") or "بدون رسالة"), 300)
-                commit_author = str(_nested(commit, "author", "name") or author)
-                commit_rows.append(f"• {commit_id} — {message} — {commit_author}")
+                commit_rows.append(f"• {commit_id} — {message}")
         if not commit_rows:
             head = payload.get("head_commit")
             if isinstance(head, Mapping):
                 commit_id = str(head.get("id") or "")[:7] or "???????"
                 message = _shorten(str(head.get("message") or "بدون رسالة"), 300)
-                commit_author = str(_nested(head, "author", "name") or author)
-                commit_rows.append(f"• {commit_id} — {message} — {commit_author}")
+                commit_rows.append(f"• {commit_id} — {message}")
         if not commit_rows:
             return None
         content = _shorten("\n".join(commit_rows))
@@ -185,6 +200,40 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
             content=content,
             url=url,
             button_text="عرض التغييرات في GitHub",
+            group_key=repo,
+            event_id=str(payload.get("after") or _nested(payload, "head_commit", "id") or "") or None,
+            event_kind="push",
+        )
+
+    if event == "pull_request":
+        pull_request = payload.get("pull_request")
+        if not isinstance(pull_request, Mapping):
+            return None
+        merge_sha = str(pull_request.get("merge_commit_sha") or "")
+        short_sha = merge_sha[:7] or "???????"
+        title = _shorten(str(pull_request.get("title") or "بدون عنوان"), 300)
+        head_ref = str(_nested(pull_request, "head", "ref") or "غير معروف")
+        base_ref = str(_nested(pull_request, "base", "ref") or "main")
+        merged_by = str(
+            _nested(pull_request, "merged_by", "login")
+            or _nested(payload, "sender", "login")
+            or "unknown"
+        )
+        return Notification(
+            title="Merge جديد",
+            repository=repo,
+            repository_url=str(_nested(payload, "repository", "html_url") or f"https://github.com/{repo}"),
+            actor_label="المدمج",
+            author=merged_by,
+            subject_label="الفروع",
+            subject=f"{head_ref} → {base_ref}",
+            content_label="الـ Commits",
+            content=f"• {short_sha} — {title}",
+            url=str(pull_request.get("html_url") or _nested(payload, "repository", "html_url")),
+            button_text="فتح الدمج في GitHub",
+            group_key=repo,
+            event_id=merge_sha or None,
+            event_kind="merge",
         )
 
     comment = payload.get("comment")
@@ -231,7 +280,7 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
     )
 
 
-def build_telegram_payload(settings: Settings, notification: Notification) -> dict[str, Any]:
+def build_rich_message(notification: Notification) -> dict[str, Any]:
     def cell(
         text: Any,
         *,
@@ -289,26 +338,28 @@ def build_telegram_payload(settings: Settings, notification: Notification) -> di
             },
         },
     ]
+    return {
+        "blocks": blocks,
+        "is_rtl": True,
+        "skip_entity_detection": True,
+    }
+
+
+def build_telegram_payload(settings: Settings, notification: Notification) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "chat_id": settings.telegram_chat_id,
-        "rich_message": {
-            "blocks": blocks,
-            "is_rtl": True,
-            "skip_entity_detection": True,
-        },
+        "rich_message": build_rich_message(notification),
     }
     if settings.telegram_message_thread_id is not None:
         payload["message_thread_id"] = settings.telegram_message_thread_id
     return payload
 
 
-def send_telegram(settings: Settings, notification: Notification) -> None:
-    endpoint = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendRichMessage"
-    payload = build_telegram_payload(settings, notification)
-
+def _telegram_request(settings: Settings, method: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    endpoint = f"https://api.telegram.org/bot{settings.telegram_bot_token}/{method}"
     request = Request(
         endpoint,
-        data=json.dumps(payload).encode(),
+        data=json.dumps(dict(payload)).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -319,11 +370,85 @@ def send_telegram(settings: Settings, notification: Notification) -> None:
         raise RuntimeError(f"Telegram request failed: {exc}") from exc
     if not result.get("ok"):
         raise RuntimeError(f"Telegram rejected the message: {result.get('description', 'unknown error')}")
+    response = result.get("result")
+    return response if isinstance(response, Mapping) else {}
+
+
+def send_telegram(settings: Settings, notification: Notification) -> int:
+    result = _telegram_request(settings, "sendRichMessage", build_telegram_payload(settings, notification))
+    message_id = result.get("message_id")
+    if not isinstance(message_id, int):
+        raise RuntimeError("Telegram response did not include a message_id")
+    return message_id
+
+
+def edit_telegram(settings: Settings, notification: Notification, message_id: int) -> None:
+    payload = {
+        "chat_id": settings.telegram_chat_id,
+        "message_id": message_id,
+        "rich_message": build_rich_message(notification),
+    }
+    _telegram_request(settings, "editMessageText", payload)
+
+
+class NotificationPublisher:
+    """Combines nearby repository updates into one Telegram message."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        window_seconds: int = PUSH_EDIT_WINDOW_SECONDS,
+        sender: Callable[[Settings, Notification], int] = send_telegram,
+        editor: Callable[[Settings, Notification, int], None] = edit_telegram,
+    ) -> None:
+        self.settings = settings
+        self.window_seconds = window_seconds
+        self.sender = sender
+        self.editor = editor
+        self._published: dict[str, PublishedNotification] = {}
+        self._lock = threading.Lock()
+
+    def publish(self, notification: Notification) -> None:
+        if not notification.group_key:
+            self.sender(self.settings, notification)
+            return
+
+        now = time.monotonic()
+        with self._lock:
+            expired = [
+                key
+                for key, published in self._published.items()
+                if now - published.updated_at > self.window_seconds
+            ]
+            for key in expired:
+                self._published.pop(key, None)
+
+            previous = self._published.get(notification.group_key)
+            if previous:
+                same_event = bool(notification.event_id and notification.event_id == previous.event_id)
+                if same_event and previous.event_kind == "merge" and notification.event_kind == "push":
+                    return
+                if same_event and previous.event_kind == notification.event_kind:
+                    return
+                self.editor(self.settings, notification, previous.message_id)
+                previous.event_id = notification.event_id
+                previous.event_kind = notification.event_kind
+                previous.updated_at = now
+                return
+
+            message_id = self.sender(self.settings, notification)
+            self._published[notification.group_key] = PublishedNotification(
+                message_id=message_id,
+                event_id=notification.event_id,
+                event_kind=notification.event_kind,
+                updated_at=now,
+            )
 
 
 class GitSpyHandler(BaseHTTPRequestHandler):
     settings: Settings
     deliveries: DeliveryCache
+    publisher: NotificationPublisher
 
     def log_message(self, fmt: str, *args: Any) -> None:
         logger.info("%s - %s", self.client_address[0], fmt % args)
@@ -385,7 +510,7 @@ class GitSpyHandler(BaseHTTPRequestHandler):
             if notification is None:
                 self._json_response(HTTPStatus.ACCEPTED, {"ok": True, "ignored": True})
                 return
-            send_telegram(self.settings, notification)
+            self.publisher.publish(notification)
         except (json.JSONDecodeError, ValueError) as exc:
             self.deliveries.release(delivery_id)
             self._json_response(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
@@ -404,6 +529,7 @@ def run() -> None:
     settings = Settings.from_env()
     GitSpyHandler.settings = settings
     GitSpyHandler.deliveries = DeliveryCache()
+    GitSpyHandler.publisher = NotificationPublisher(settings)
     server = ThreadingHTTPServer(("0.0.0.0", settings.port), GitSpyHandler)
     logger.info("GitSpy listening on 0.0.0.0:%s", settings.port)
     server.serve_forever()
