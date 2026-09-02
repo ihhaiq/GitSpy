@@ -1,0 +1,1 @@
+"""GitSpy test suite."""
