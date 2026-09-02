@@ -31,7 +31,7 @@ class NotificationTests(unittest.TestCase):
             "comment": {
                 "body": "Hello <b>world</b>",
                 "html_url": "https://github.com/ihhaiq/GitSpy/issues/7#issuecomment-1",
-                "user": {"login": "someone"},
+                "user": {"login": "someone", "html_url": "https://github.com/someone"},
             },
         }
         notification = build_notification("issue_comment", payload, "ihhaiq")
@@ -58,7 +58,7 @@ class NotificationTests(unittest.TestCase):
             "comment": {
                 "body": "A comment",
                 "html_url": "https://github.com/ihhaiq/GitSpy/issues/7#issuecomment-1",
-                "user": {"login": "someone"},
+                "user": {"login": "someone", "html_url": "https://github.com/someone"},
             },
         }
         notification = build_notification("issue_comment", payload, "ihhaiq")
@@ -77,6 +77,10 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(repository_button["text"], "ihhaiq/GitSpy")
         self.assertEqual(repository_button["style"], "success")
         self.assertEqual(repository_button["url"], "https://github.com/ihhaiq/GitSpy")
+        author_button = table["cells"][2][1]["text"]["button"]
+        self.assertEqual(author_button["text"], "someone")
+        self.assertEqual(author_button["style"], "primary")
+        self.assertEqual(author_button["url"], "https://github.com/someone")
         self.assertEqual(footer["type"], "footer")
         footer_button = footer["text"]["button"]
         self.assertEqual(footer_button["text"], "فتح التعليق في GitHub")
@@ -90,7 +94,7 @@ class NotificationTests(unittest.TestCase):
             "deleted": False,
             "compare": "https://github.com/ihhaiq/GitSpy/compare/old...new",
             "repository": {"full_name": "ihhaiq/GitSpy", "owner": {"login": "ihhaiq"}},
-            "sender": {"login": "ihhaiq"},
+            "sender": {"login": "ihhaiq", "html_url": "https://github.com/ihhaiq"},
             "commits": [
                 {"id": "1234567890", "message": "First change", "author": {"name": "HUSSEIN"}},
                 {"id": "abcdef1234", "message": "Second change", "author": {"name": "HUSSEIN"}},
@@ -107,6 +111,7 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(notification.button_text, "عرض التغييرات في GitHub")
         self.assertEqual(notification.group_key, "ihhaiq/GitSpy")
         self.assertEqual(notification.event_kind, "push")
+        self.assertEqual(notification.author_url, "https://github.com/ihhaiq")
 
     def test_merged_pull_request_notification(self) -> None:
         payload = {
@@ -116,13 +121,13 @@ class NotificationTests(unittest.TestCase):
                 "html_url": "https://github.com/ihhaiq/GitSpy",
                 "owner": {"login": "ihhaiq"},
             },
-            "sender": {"login": "ihhaiq"},
+            "sender": {"login": "ihhaiq", "html_url": "https://github.com/ihhaiq"},
             "pull_request": {
                 "merged": True,
                 "merge_commit_sha": "1234567890abcdef",
                 "title": "إضافة ميزة جديدة",
                 "html_url": "https://github.com/ihhaiq/GitSpy/pull/8",
-                "merged_by": {"login": "ihhaiq"},
+                "merged_by": {"login": "ihhaiq", "html_url": "https://github.com/ihhaiq"},
                 "head": {"ref": "feature/new"},
                 "base": {"ref": "main"},
             },
@@ -135,6 +140,7 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(notification.content, "• 1234567 — إضافة ميزة جديدة")
         self.assertEqual(notification.event_id, "1234567890abcdef")
         self.assertEqual(notification.event_kind, "merge")
+        self.assertEqual(notification.author_url, "https://github.com/ihhaiq")
 
     def test_nearby_updates_edit_the_same_message(self) -> None:
         sent: list[object] = []
