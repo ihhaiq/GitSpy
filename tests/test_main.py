@@ -179,7 +179,62 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(len(sent), 1)
         self.assertEqual(len(edited), 1)
         self.assertEqual(edited[0][1], 77)
-        self.assertEqual(edited[0][0].content, "• bbb2222 — Second")
+        self.assertEqual(
+            edited[0][0].content,
+            "• aaa1111 — First\n• bbb2222 — Second",
+        )
+
+    def test_aggregation_keeps_branches_and_removes_duplicate_commits(self) -> None:
+        sent: list[object] = []
+        edited: list[tuple[object, int]] = []
+        settings = Settings("token", "-1001", "secret", "ihhaiq", None, 8080)
+
+        def sender(_settings: Settings, notification: object) -> int:
+            sent.append(notification)
+            return 88
+
+        def editor(_settings: Settings, notification: object, message_id: int) -> None:
+            edited.append((notification, message_id))
+
+        publisher = NotificationPublisher(settings, sender=sender, editor=editor)
+        common = {
+            "deleted": False,
+            "repository": {"full_name": "ihhaiq/GitSpy", "owner": {"login": "ihhaiq"}},
+            "sender": {"login": "ihhaiq"},
+        }
+        first = build_notification(
+            "push",
+            {
+                **common,
+                "ref": "refs/heads/feature/one",
+                "after": "aaa1111",
+                "commits": [{"id": "aaa1111", "message": "First"}],
+            },
+            "ihhaiq",
+        )
+        second = build_notification(
+            "push",
+            {
+                **common,
+                "ref": "refs/heads/feature/two",
+                "after": "bbb2222",
+                "commits": [
+                    {"id": "aaa1111", "message": "First"},
+                    {"id": "bbb2222", "message": "Second"},
+                ],
+            },
+            "ihhaiq",
+        )
+        assert first is not None and second is not None
+
+        publisher.publish(first)
+        publisher.publish(second)
+
+        combined = edited[0][0]
+        self.assertEqual(combined.subject_label, "الفروع")
+        self.assertEqual(combined.subject, "feature/one، feature/two")
+        self.assertEqual(combined.content.count("aaa1111"), 1)
+        self.assertEqual(combined.content.count("bbb2222"), 1)
 
 
 if __name__ == "__main__":
