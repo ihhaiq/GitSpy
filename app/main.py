@@ -29,6 +29,7 @@ SUPPORTED_EVENTS = {
     "pull_request_review_comment",
     "discussion_comment",
     "commit_comment",
+    "push",
 }
 
 
@@ -66,11 +67,16 @@ class Settings:
 
 @dataclass(frozen=True)
 class Notification:
+    title: str
     repository: str
+    actor_label: str
     author: str
+    subject_label: str
     subject: str
-    comment: str
+    content_label: str
+    content: str
     url: str
+    button_text: str
 
 
 class DeliveryCache:
@@ -125,7 +131,9 @@ def _shorten(text: str, limit: int = MAX_COMMENT_CHARS) -> str:
 
 
 def build_notification(event: str, payload: Mapping[str, Any], expected_owner: str) -> Notification | None:
-    if event not in SUPPORTED_EVENTS or payload.get("action") != "created":
+    if event not in SUPPORTED_EVENTS:
+        return None
+    if event != "push" and payload.get("action") != "created":
         return None
 
     owner = str(_nested(payload, "repository", "owner", "login"))
@@ -134,8 +142,51 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
         return None
 
     repo = str(_nested(payload, "repository", "full_name"))
+    if not repo:
+        return None
+
+    if event == "push":
+        if payload.get("deleted"):
+            return None
+        ref = str(payload.get("ref") or "")
+        branch = ref.removeprefix("refs/heads/").removeprefix("refs/tags/") or "غير معروف"
+        author = str(_nested(payload, "sender", "login") or _nested(payload, "pusher", "name") or "unknown")
+        commits = payload.get("commits")
+        commit_rows: list[str] = []
+        if isinstance(commits, list):
+            for commit in commits:
+                if not isinstance(commit, Mapping):
+                    continue
+                commit_id = str(commit.get("id") or "")[:7] or "???????"
+                message = _shorten(str(commit.get("message") or "بدون رسالة"), 300)
+                commit_author = str(_nested(commit, "author", "name") or author)
+                commit_rows.append(f"• {commit_id} — {message} — {commit_author}")
+        if not commit_rows:
+            head = payload.get("head_commit")
+            if isinstance(head, Mapping):
+                commit_id = str(head.get("id") or "")[:7] or "???????"
+                message = _shorten(str(head.get("message") or "بدون رسالة"), 300)
+                commit_author = str(_nested(head, "author", "name") or author)
+                commit_rows.append(f"• {commit_id} — {message} — {commit_author}")
+        if not commit_rows:
+            return None
+        content = _shorten("\n".join(commit_rows))
+        url = str(payload.get("compare") or _nested(payload, "head_commit", "url") or _nested(payload, "repository", "html_url"))
+        return Notification(
+            title="Push جديد",
+            repository=repo,
+            actor_label="الناشر",
+            author=author,
+            subject_label="الفرع",
+            subject=branch,
+            content_label="الـ Commits",
+            content=content,
+            url=url,
+            button_text="عرض التغييرات في GitHub",
+        )
+
     comment = payload.get("comment")
-    if not repo or not isinstance(comment, Mapping):
+    if not isinstance(comment, Mapping):
         return None
 
     author = str(_nested(comment, "user", "login", default="unknown"))
@@ -164,11 +215,16 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
         subject = f"تعليق على Commit {commit_id or '?'}"
 
     return Notification(
+        title="تعليق جديد",
         repository=repo,
+        actor_label="الكاتب",
         author=author,
+        subject_label="المكان",
         subject=subject,
-        comment=body,
+        content_label="التعليق",
+        content=body,
         url=url,
+        button_text="فتح التعليق في GitHub",
     )
 
 
@@ -192,11 +248,11 @@ def build_telegram_payload(settings: Settings, notification: Notification) -> di
         return result
 
     rows = [
-        [cell("تعليق جديد", header=True, colspan=2, align="center")],
+        [cell(notification.title, header=True, colspan=2, align="center")],
         [cell("المستودع", header=True), cell(notification.repository)],
-        [cell("الكاتب", header=True), cell(notification.author)],
-        [cell("المكان", header=True), cell(notification.subject)],
-        [cell("التعليق", header=True), cell(notification.comment)],
+        [cell(notification.actor_label, header=True), cell(notification.author)],
+        [cell(notification.subject_label, header=True), cell(notification.subject)],
+        [cell(notification.content_label, header=True), cell(notification.content)],
     ]
     payload: dict[str, Any] = {
         "chat_id": settings.telegram_chat_id,
@@ -214,7 +270,7 @@ def build_telegram_payload(settings: Settings, notification: Notification) -> di
             "skip_entity_detection": True,
         },
         "reply_markup": {
-            "inline_keyboard": [[{"text": "فتح التعليق في GitHub", "url": notification.url}]]
+            "inline_keyboard": [[{"text": notification.button_text, "url": notification.url}]]
         },
     }
     if settings.telegram_message_thread_id is not None:

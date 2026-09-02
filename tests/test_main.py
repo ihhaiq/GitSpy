@@ -32,7 +32,7 @@ class NotificationTests(unittest.TestCase):
         self.assertIsNotNone(notification)
         assert notification is not None
         self.assertEqual(notification.repository, "ihhaiq/GitSpy")
-        self.assertEqual(notification.comment, "Hello <b>world</b>")
+        self.assertEqual(notification.content, "Hello <b>world</b>")
         self.assertIn("Fix <this>", notification.subject)
 
     def test_ignores_edits_and_other_owners(self) -> None:
@@ -66,6 +66,27 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(table["cells"][0][0]["text"], "تعليق جديد")
         self.assertEqual(table["cells"][0][0]["colspan"], 2)
         self.assertEqual(table["cells"][4][1]["text"], "A comment")
+
+    def test_push_notification_groups_commits(self) -> None:
+        payload = {
+            "ref": "refs/heads/main",
+            "deleted": False,
+            "compare": "https://github.com/ihhaiq/GitSpy/compare/old...new",
+            "repository": {"full_name": "ihhaiq/GitSpy", "owner": {"login": "ihhaiq"}},
+            "sender": {"login": "ihhaiq"},
+            "commits": [
+                {"id": "1234567890", "message": "First change", "author": {"name": "HUSSEIN"}},
+                {"id": "abcdef1234", "message": "Second change", "author": {"name": "HUSSEIN"}},
+            ],
+        }
+        notification = build_notification("push", payload, "ihhaiq")
+        self.assertIsNotNone(notification)
+        assert notification is not None
+        self.assertEqual(notification.title, "Push جديد")
+        self.assertEqual(notification.subject, "main")
+        self.assertIn("1234567 — First change", notification.content)
+        self.assertIn("abcdef1 — Second change", notification.content)
+        self.assertEqual(notification.button_text, "عرض التغييرات في GitHub")
 
 
 if __name__ == "__main__":
