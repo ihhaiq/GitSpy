@@ -69,6 +69,7 @@ class Settings:
 class Notification:
     title: str
     repository: str
+    repository_url: str
     actor_label: str
     author: str
     subject_label: str
@@ -175,6 +176,7 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
         return Notification(
             title="Push جديد",
             repository=repo,
+            repository_url=str(_nested(payload, "repository", "html_url") or f"https://github.com/{repo}"),
             actor_label="الناشر",
             author=author,
             subject_label="الفرع",
@@ -217,6 +219,7 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
     return Notification(
         title="تعليق جديد",
         repository=repo,
+        repository_url=str(_nested(payload, "repository", "html_url") or f"https://github.com/{repo}"),
         actor_label="الكاتب",
         author=author,
         subject_label="المكان",
@@ -254,23 +257,41 @@ def build_telegram_payload(settings: Settings, notification: Notification) -> di
         [cell(notification.subject_label, header=True), cell(notification.subject)],
         [cell(notification.content_label, header=True), cell(notification.content)],
     ]
+    blocks = [
+        {
+            "type": "table",
+            "cells": rows,
+            "is_bordered": True,
+            "is_striped": True,
+            "is_compact": True,
+        },
+        {
+            "type": "footer",
+            "text": "GitSpy • مراقبة GitHub",
+        },
+        {
+            "type": "buttons",
+            "buttons": [
+                {
+                    "text": notification.button_text,
+                    "style": "primary",
+                    "url": notification.url,
+                },
+                {
+                    "text": notification.repository,
+                    "style": "success",
+                    "url": notification.repository_url,
+                },
+            ],
+            "align": "center",
+        },
+    ]
     payload: dict[str, Any] = {
         "chat_id": settings.telegram_chat_id,
         "rich_message": {
-            "blocks": [
-                {
-                    "type": "table",
-                    "cells": rows,
-                    "is_bordered": True,
-                    "is_striped": True,
-                    "is_compact": True,
-                }
-            ],
+            "blocks": blocks,
             "is_rtl": True,
             "skip_entity_detection": True,
-        },
-        "reply_markup": {
-            "inline_keyboard": [[{"text": notification.button_text, "url": notification.url}]]
         },
     }
     if settings.telegram_message_thread_id is not None:

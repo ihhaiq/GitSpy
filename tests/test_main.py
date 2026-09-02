@@ -60,12 +60,20 @@ class NotificationTests(unittest.TestCase):
         settings = Settings("token", "-1001", "secret", "ihhaiq", None, 8080)
         telegram_payload = build_telegram_payload(settings, notification)
         table = telegram_payload["rich_message"]["blocks"][0]
+        footer = telegram_payload["rich_message"]["blocks"][1]
+        buttons = telegram_payload["rich_message"]["blocks"][2]
 
         self.assertEqual(table["type"], "table")
         self.assertTrue(table["is_bordered"])
         self.assertEqual(table["cells"][0][0]["text"], "تعليق جديد")
         self.assertEqual(table["cells"][0][0]["colspan"], 2)
         self.assertEqual(table["cells"][4][1]["text"], "A comment")
+        self.assertEqual(footer, {"type": "footer", "text": "GitSpy • مراقبة GitHub"})
+        self.assertEqual(buttons["type"], "buttons")
+        self.assertEqual(buttons["buttons"][0]["style"], "primary")
+        self.assertEqual(buttons["buttons"][1]["text"], "ihhaiq/GitSpy")
+        self.assertEqual(buttons["buttons"][1]["url"], "https://github.com/ihhaiq/GitSpy")
+        self.assertNotIn("reply_markup", telegram_payload)
 
     def test_push_notification_groups_commits(self) -> None:
         payload = {
