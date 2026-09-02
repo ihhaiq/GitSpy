@@ -278,15 +278,15 @@ def build_telegram_payload(settings: Settings, notification: Notification) -> di
             "is_compact": True,
         },
         {
-            "type": "buttons",
-            "buttons": [
-                {
+            "type": "footer",
+            "text": {
+                "type": "button",
+                "button": {
                     "text": notification.button_text,
                     "style": "primary",
                     "url": notification.url,
-                }
-            ],
-            "align": "center",
+                },
+            },
         },
     ]
     payload: dict[str, Any] = {

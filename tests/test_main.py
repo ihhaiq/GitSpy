@@ -60,7 +60,7 @@ class NotificationTests(unittest.TestCase):
         settings = Settings("token", "-1001", "secret", "ihhaiq", None, 8080)
         telegram_payload = build_telegram_payload(settings, notification)
         table = telegram_payload["rich_message"]["blocks"][0]
-        buttons = telegram_payload["rich_message"]["blocks"][1]
+        footer = telegram_payload["rich_message"]["blocks"][1]
 
         self.assertEqual(table["type"], "table")
         self.assertTrue(table["is_bordered"])
@@ -71,9 +71,10 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(repository_button["text"], "ihhaiq/GitSpy")
         self.assertEqual(repository_button["style"], "success")
         self.assertEqual(repository_button["url"], "https://github.com/ihhaiq/GitSpy")
-        self.assertEqual(buttons["type"], "buttons")
-        self.assertEqual(buttons["buttons"][0]["style"], "primary")
-        self.assertEqual(len(buttons["buttons"]), 1)
+        self.assertEqual(footer["type"], "footer")
+        footer_button = footer["text"]["button"]
+        self.assertEqual(footer_button["text"], "فتح التعليق في GitHub")
+        self.assertEqual(footer_button["style"], "primary")
         self.assertEqual(len(telegram_payload["rich_message"]["blocks"]), 2)
         self.assertNotIn("reply_markup", telegram_payload)
 
