@@ -142,6 +142,43 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(notification.event_kind, "merge")
         self.assertEqual(notification.author_url, "https://github.com/ihhaiq")
 
+    def test_fork_notification_has_rich_account_button(self) -> None:
+        payload = {
+            "repository": {
+                "full_name": "ihhaiq/GitSpy",
+                "html_url": "https://github.com/ihhaiq/GitSpy",
+                "owner": {"login": "ihhaiq"},
+            },
+            "sender": {
+                "login": "someone",
+                "html_url": "https://github.com/someone",
+            },
+            "forkee": {
+                "full_name": "someone/GitSpy",
+                "html_url": "https://github.com/someone/GitSpy",
+                "default_branch": "main",
+                "private": False,
+                "owner": {"login": "someone"},
+            },
+        }
+
+        notification = build_notification("fork", payload, "ihhaiq")
+        self.assertIsNotNone(notification)
+        assert notification is not None
+        self.assertEqual(notification.title, "Fork جديد")
+        self.assertEqual(notification.actor_label, "صاحب الـFork")
+        self.assertEqual(notification.author, "someone")
+        self.assertEqual(notification.author_url, "https://github.com/someone")
+        self.assertEqual(notification.subject, "someone/GitSpy")
+        self.assertIn("الفرع الافتراضي: main", notification.content)
+        self.assertEqual(notification.url, "https://github.com/someone/GitSpy")
+
+        settings = Settings("token", "-1001", "secret", "ihhaiq", None, 8080)
+        table = build_telegram_payload(settings, notification)["rich_message"]["blocks"][0]
+        account_button = table["cells"][2][1]["text"]["button"]
+        self.assertEqual(account_button["text"], "someone")
+        self.assertEqual(account_button["url"], "https://github.com/someone")
+
     def test_nearby_updates_edit_the_same_message(self) -> None:
         sent: list[object] = []
         edited: list[tuple[object, int]] = []

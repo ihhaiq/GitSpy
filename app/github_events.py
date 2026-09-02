@@ -18,6 +18,7 @@ SUPPORTED_EVENTS = {
     "commit_comment",
     "push",
     "pull_request",
+    "fork",
 }
 
 
@@ -153,6 +154,42 @@ def _build_merge(payload: Mapping[str, Any], repo: str, repo_url: str) -> Notifi
     )
 
 
+def _build_fork(payload: Mapping[str, Any], repo: str, repo_url: str) -> Notification | None:
+    forkee = payload.get("forkee")
+    if not isinstance(forkee, Mapping):
+        return None
+
+    author = str(
+        _nested(payload, "sender", "login")
+        or _nested(forkee, "owner", "login")
+        or "unknown"
+    )
+    author_url = str(
+        _nested(payload, "sender", "html_url")
+        or _nested(forkee, "owner", "html_url")
+        or f"https://github.com/{author}"
+    )
+    fork_name = str(forkee.get("full_name") or forkee.get("name") or "غير معروف")
+    default_branch = str(forkee.get("default_branch") or "غير معروف")
+    visibility = "خاص" if forkee.get("private") else "عام"
+
+    return Notification(
+        title="Fork جديد",
+        repository=repo,
+        repository_url=repo_url,
+        actor_label="صاحب الـFork",
+        author=author,
+        author_url=author_url,
+        subject_label="المستودع الجديد",
+        subject=fork_name,
+        content_label="التفاصيل",
+        content=f"الفرع الافتراضي: {default_branch}\nالظهور: {visibility}",
+        url=str(forkee.get("html_url") or repo_url),
+        button_text="فتح الـFork في GitHub",
+        event_kind="fork",
+    )
+
+
 def _build_comment(event: str, payload: Mapping[str, Any], repo: str, repo_url: str) -> Notification | None:
     comment = payload.get("comment")
     if not isinstance(comment, Mapping):
@@ -201,7 +238,7 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
     if event == "pull_request":
         if payload.get("action") != "closed" or not _nested(payload, "pull_request", "merged", default=False):
             return None
-    elif event != "push" and payload.get("action") != "created":
+    elif event not in {"push", "fork"} and payload.get("action") != "created":
         return None
 
     repository = _repository(payload, expected_owner)
@@ -213,4 +250,6 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
         return _build_push(payload, repo, repo_url)
     if event == "pull_request":
         return _build_merge(payload, repo, repo_url)
+    if event == "fork":
+        return _build_fork(payload, repo, repo_url)
     return _build_comment(event, payload, repo, repo_url)
