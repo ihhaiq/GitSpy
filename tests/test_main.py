@@ -68,11 +68,14 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(table["cells"][0][0]["text"], "تعليق جديد")
         self.assertEqual(table["cells"][0][0]["colspan"], 2)
         self.assertEqual(table["cells"][4][1]["text"], "A comment")
+        repository_button = table["cells"][1][1]["text"]["button"]
+        self.assertEqual(repository_button["text"], "ihhaiq/GitSpy")
+        self.assertEqual(repository_button["style"], "success")
+        self.assertEqual(repository_button["url"], "https://github.com/ihhaiq/GitSpy")
         self.assertEqual(footer, {"type": "footer", "text": "GitSpy • مراقبة GitHub"})
         self.assertEqual(buttons["type"], "buttons")
         self.assertEqual(buttons["buttons"][0]["style"], "primary")
-        self.assertEqual(buttons["buttons"][1]["text"], "ihhaiq/GitSpy")
-        self.assertEqual(buttons["buttons"][1]["url"], "https://github.com/ihhaiq/GitSpy")
+        self.assertEqual(len(buttons["buttons"]), 1)
         self.assertNotIn("reply_markup", telegram_payload)
 
     def test_push_notification_groups_commits(self) -> None:
