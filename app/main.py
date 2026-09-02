@@ -278,10 +278,6 @@ def build_telegram_payload(settings: Settings, notification: Notification) -> di
             "is_compact": True,
         },
         {
-            "type": "footer",
-            "text": "GitSpy • مراقبة GitHub",
-        },
-        {
             "type": "buttons",
             "buttons": [
                 {
