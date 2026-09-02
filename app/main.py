@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import html
 import json
 import logging
 import os
@@ -67,7 +66,10 @@ class Settings:
 
 @dataclass(frozen=True)
 class Notification:
-    text: str
+    repository: str
+    author: str
+    subject: str
+    comment: str
     url: str
 
 
@@ -161,29 +163,68 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
         commit_id = str(comment.get("commit_id") or "")[:7]
         subject = f"تعليق على Commit {commit_id or '?'}"
 
-    message = (
-        "💬 <b>تعليق GitHub جديد</b>\n\n"
-        f"📦 <code>{html.escape(repo)}</code>\n"
-        f"👤 <code>{html.escape(author)}</code>\n"
-        f"📌 {html.escape(subject)}\n\n"
-        f"{html.escape(body)}"
+    return Notification(
+        repository=repo,
+        author=author,
+        subject=subject,
+        comment=body,
+        url=url,
     )
-    return Notification(text=message, url=url)
 
 
-def send_telegram(settings: Settings, notification: Notification) -> None:
-    endpoint = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+def build_telegram_payload(settings: Settings, notification: Notification) -> dict[str, Any]:
+    def cell(
+        text: str,
+        *,
+        header: bool = False,
+        colspan: int | None = None,
+        align: str = "right",
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "text": text,
+            "align": align,
+            "valign": "middle" if header else "top",
+        }
+        if header:
+            result["is_header"] = True
+        if colspan is not None:
+            result["colspan"] = colspan
+        return result
+
+    rows = [
+        [cell("تعليق جديد", header=True, colspan=2, align="center")],
+        [cell("المستودع", header=True), cell(notification.repository)],
+        [cell("الكاتب", header=True), cell(notification.author)],
+        [cell("المكان", header=True), cell(notification.subject)],
+        [cell("التعليق", header=True), cell(notification.comment)],
+    ]
     payload: dict[str, Any] = {
         "chat_id": settings.telegram_chat_id,
-        "text": notification.text,
-        "parse_mode": "HTML",
-        "link_preview_options": {"is_disabled": True},
+        "rich_message": {
+            "blocks": [
+                {
+                    "type": "table",
+                    "cells": rows,
+                    "is_bordered": True,
+                    "is_striped": True,
+                    "is_compact": True,
+                }
+            ],
+            "is_rtl": True,
+            "skip_entity_detection": True,
+        },
         "reply_markup": {
             "inline_keyboard": [[{"text": "فتح التعليق في GitHub", "url": notification.url}]]
         },
     }
     if settings.telegram_message_thread_id is not None:
         payload["message_thread_id"] = settings.telegram_message_thread_id
+    return payload
+
+
+def send_telegram(settings: Settings, notification: Notification) -> None:
+    endpoint = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendRichMessage"
+    payload = build_telegram_payload(settings, notification)
 
     request = Request(
         endpoint,
