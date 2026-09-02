@@ -75,6 +75,7 @@ class Notification:
     repository_url: str
     actor_label: str
     author: str
+    author_url: str
     subject_label: str
     subject: str
     content_label: str
@@ -169,6 +170,7 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
         ref = str(payload.get("ref") or "")
         branch = ref.removeprefix("refs/heads/").removeprefix("refs/tags/") or "غير معروف"
         author = str(_nested(payload, "sender", "login") or _nested(payload, "pusher", "name") or "unknown")
+        author_url = str(_nested(payload, "sender", "html_url") or f"https://github.com/{author}")
         commits = payload.get("commits")
         commit_rows: list[str] = []
         if isinstance(commits, list):
@@ -194,6 +196,7 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
             repository_url=str(_nested(payload, "repository", "html_url") or f"https://github.com/{repo}"),
             actor_label="الناشر",
             author=author,
+            author_url=author_url,
             subject_label="الفرع",
             subject=branch,
             content_label="الـ Commits",
@@ -219,12 +222,18 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
             or _nested(payload, "sender", "login")
             or "unknown"
         )
+        merged_by_url = str(
+            _nested(pull_request, "merged_by", "html_url")
+            or _nested(payload, "sender", "html_url")
+            or f"https://github.com/{merged_by}"
+        )
         return Notification(
             title="Merge جديد",
             repository=repo,
             repository_url=str(_nested(payload, "repository", "html_url") or f"https://github.com/{repo}"),
             actor_label="المدمج",
             author=merged_by,
+            author_url=merged_by_url,
             subject_label="الفروع",
             subject=f"{head_ref} → {base_ref}",
             content_label="الـ Commits",
@@ -241,6 +250,7 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
         return None
 
     author = str(_nested(comment, "user", "login", default="unknown"))
+    author_url = str(_nested(comment, "user", "html_url") or f"https://github.com/{author}")
     body = _shorten(str(comment.get("body") or ""))
     url = str(comment.get("html_url") or _nested(payload, "repository", "html_url"))
 
@@ -271,6 +281,7 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
         repository_url=str(_nested(payload, "repository", "html_url") or f"https://github.com/{repo}"),
         actor_label="الكاتب",
         author=author,
+        author_url=author_url,
         subject_label="المكان",
         subject=subject,
         content_label="التعليق",
@@ -314,7 +325,19 @@ def build_rich_message(notification: Notification) -> dict[str, Any]:
                 }
             ),
         ],
-        [cell(notification.actor_label, header=True), cell(notification.author)],
+        [
+            cell(notification.actor_label, header=True),
+            cell(
+                {
+                    "type": "button",
+                    "button": {
+                        "text": notification.author,
+                        "style": "primary",
+                        "url": notification.author_url,
+                    },
+                }
+            ),
+        ],
         [cell(notification.subject_label, header=True), cell(notification.subject)],
         [cell(notification.content_label, header=True), cell(notification.content)],
     ]
