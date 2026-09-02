@@ -233,7 +233,7 @@ def build_notification(event: str, payload: Mapping[str, Any], expected_owner: s
 
 def build_telegram_payload(settings: Settings, notification: Notification) -> dict[str, Any]:
     def cell(
-        text: str,
+        text: Any,
         *,
         header: bool = False,
         colspan: int | None = None,
@@ -252,7 +252,19 @@ def build_telegram_payload(settings: Settings, notification: Notification) -> di
 
     rows = [
         [cell(notification.title, header=True, colspan=2, align="center")],
-        [cell("المستودع", header=True), cell(notification.repository)],
+        [
+            cell("المستودع", header=True),
+            cell(
+                {
+                    "type": "button",
+                    "button": {
+                        "text": notification.repository,
+                        "style": "success",
+                        "url": notification.repository_url,
+                    },
+                }
+            ),
+        ],
         [cell(notification.actor_label, header=True), cell(notification.author)],
         [cell(notification.subject_label, header=True), cell(notification.subject)],
         [cell(notification.content_label, header=True), cell(notification.content)],
@@ -276,12 +288,7 @@ def build_telegram_payload(settings: Settings, notification: Notification) -> di
                     "text": notification.button_text,
                     "style": "primary",
                     "url": notification.url,
-                },
-                {
-                    "text": notification.repository,
-                    "style": "success",
-                    "url": notification.repository_url,
-                },
+                }
             ],
             "align": "center",
         },
